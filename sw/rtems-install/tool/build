@@ -1,0 +1,50 @@
+#!/bin/bash
+
+PREFIX=/home/robot/School/master/sw/rtems
+TARGET=i386-rtems4.10
+BSP=pc386
+
+rm -rf binutils-2.20.1
+tar xvf binutils-2.20.1.tar.bz2
+cd binutils-2.20.1
+patch -p1 < ../binutils-2.20.1-rtems4.10-20100826.diff
+cd ..
+
+rm -rf build-binutils
+mkdir build-binutils
+cd build-binutils
+
+../binutils-2.20.1/configure --target=${TARGET} --prefix=${PREFIX}
+make -j6
+make install
+
+cd ..
+
+export PATH=${PREFIX}/bin:${PATH}
+
+rm -rf newlib-1.18.0
+tar xvf newlib-1.18.0.tar.gz
+cd newlib-1.18.0
+patch -p1 < ../newlib-1.18.0-rtems4.10-20110518.diff
+cd ..
+
+rm -rf gcc-4.4.6
+tar xvf gcc-core-4.4.6.tar.bz2
+tar xvf gcc-g++-4.4.6.tar.bz2
+
+cd gcc-4.4.6
+patch -p1 < ../gcc-core-4.4.6-rtems4.10-20110829.diff 
+patch -p1 < ../gcc-g++-4.4.6-rtems4.10-20110829.diff 
+ln -s ../newlib-1.18.0/newlib .
+cd ..
+
+rm -rf build-gcc
+mkdir build-gcc
+cd build-gcc
+
+../gcc-4.4.6/configure --target=${TARGET} --prefix=${PREFIX} --with-gnu-as --with-gnu-ld --with-newlib --verbose --enable-threads --enable-languages="c,c++"
+make -j6 all
+make info
+make install
+
+cd ..

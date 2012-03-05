@@ -1,0 +1,21 @@
+#!/bin/bash
+
+PREFIX=/home/robot/School/master/sw/rtems
+TARGET=i386-rtems4.10
+BSP=pc386
+
+echo "deleting old build"
+rm -rf ./build-rtems
+
+echo "preparing new build environment"
+mkdir build-rtems
+cd build-rtems
+
+echo "configuring"
+CFLAGS_FOR_TARGET="-m32" ../rtems-4.10.2/configure --target=$TARGET \
+    --disable-posix --disable-networking --disable-cxx \
+    --enable-rtemsbsp=$BSP \
+    --prefix=$PREFIX
+make all
+make install
+

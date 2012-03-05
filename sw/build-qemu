@@ -1,0 +1,10 @@
+#!/bin/bash
+
+
+PREFIX=/home/robot/School/master/sw/qemu
+TARGETS="i386-softmmu i386-linux-user"
+
+cd ./qemu-source
+./configure --prefix=${PREFIX} --target-list="${TARGETS}" --disable-kvm --disable-vnc --disable-werror --disable-smartcard --disable-smartcard-nss
+make -j6
+make install

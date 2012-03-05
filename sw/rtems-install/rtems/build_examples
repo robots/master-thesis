@@ -1,0 +1,11 @@
+#!/bin/bash
+
+PREFIX=/home/robot/School/master/sw/rtems
+TARGET=i386-rtems4.10
+BSP=pc386
+
+export RTEMS_MAKEFILE_PATH=${PREFIX}/${TARGET}/${BSP}
+
+cd examples-v2-4.10.2 
+make
+
