@@ -1,189 +1,178 @@
 
-from struct import pack, unpack
 import gca
+from gca_util import *
 
-def hexit( text ):
-	h = []
-	for c in text:
-		h.append( "%02X" % (ord(c)) )
-	return " ".join(h)
+class rtems:
+	_OBJECTS_APIS = ["NO_API", "INTERNAL_API", "CLASSIC_API", "POSIX_API", "ITRON_API"]
 
-OBJECTS_APIS = ["NO_API", "INTERNAL_API",	"CLASSIC_API",	"POSIX_API", "ITRON_API"]
+	_OBJECTS = [
+		[""],
+		["", "THREADS", "MUTEXES"],
+		["", "TASKS", "TIMERS", "SEMAPHORES", "QUEUES", "PARTITIONS", "REGIONS", "PORTS", "PERIODS", "EXTENSIONS", "BARRIERS"],
+	]
 
-OI_TAB = "_Objects_Information_table"
 
-UnknownSymbols = [
-	OI_TAB,
-	"_Thread_Executing"
-]
+	_OI_TAB = "_Objects_Information_table"
 
-Symbols = []
-threads = []
-thread_list = []
+	_UNK_SYMBOLS = {
+		"_Objects_Information_table",
+		"_Thread_Executing",
+		"_Thread_Idle",
+		"_Thread_Heir",
+		"_CPU_Context_switch",
+		"_Thread_Dispatch",
+	}
 
-def rtems_get_objectinfo_table(cpu):
-	if not symbol_exists(OI_TAB):
-		return []
-	
-	addr = symbol_get(OI_TAB)
-	data = gca.target_memory_read(cpu, addr, 4 * len(OBJECTS_APIS))
-	info_ptrs = []
-	while len(data) >= 4:
-		ptr = unpack("I", data[:4])[0]
-		info_ptrs.append(ptr)
-		data = data[4:]
+	thread_list = {}
 
-	return info_ptrs
+	def __init__(self, ss, t_cpu):
+		self._symbol_storage = ss
+		self._target_cpu = t_cpu
 
-def rtems_get_objectinfo_content(cpu, addr):
-	data = gca.target_memory_read(cpu, addr, 64)
+		ss.add_unknown(self._UNK_SYMBOLS)
 
-	api = unpack("I", data[:4])[0]
-	clas = unpack("H", data[4:6])[0]
-	maximum = unpack("H", data[16:18])[0]
-#	allocation_size = unpack("H", data[22:24])[0]
-#	size = unpack("I", data[24:28])[0]
-	local_table = unpack("I", data[28:32])[0]
-	out = {"api": api, "class": clas, "maximum": maximum, "local_table": local_table}
-	print out
-	return out
+	def get_objectinfo_table(self, cpu):
+		if not self._symbol_storage.exists(self._OI_TAB):
+			return []
+		
+		addr = self._symbol_storage.get(self._OI_TAB)
+		info_ptrs = read_table(cpu, addr, len(self._OBJECTS_APIS))
 
-def rtems_get_threadcontrol(cpu, addr):
-#TODO: parse registers (ESP, EBP, ...)
-	data = gca.target_memory_read(cpu, addr, 5*4+4)
-#	print repr(data)
-	tc = unpack("IIIIII", data)
-	out = {"oid": tc[2], "name": data[15:11:-1], "current_state": tc[4]}
-#	print out
-	return out
+		return info_ptrs
 
-def rtems_get_current(cpu):
-	thread_ctrl_ptr = symbol_get("_Thread_Executing")
-	if thread_ctrl_ptr == False:
-		return 1
+	def get_objectinfo(self, cpu, addr):
+		data = gca.target_memory_read(cpu, addr, 64)
 
-	thread_control = rtems_get_threadcontrol(cpu, thread_ctrl_ptr)
-	print "curent " , thread_control
-	return thread_control["oid"]		
+		api = unpack("I", data[:4])[0]
+		clas = unpack("H", data[4:6])[0]
+		maximum = unpack("H", data[16:18])[0]
+#		allocation_size = unpack("H", data[22:24])[0]
+#		size = unpack("I", data[24:28])[0]
+		local_table = unpack("I", data[28:32])[0]
 
-def rtems_get_threads(cpu):
-	thread_list = []
+		out = {"api": api, "class": clas, "maximum": maximum, "local_table": local_table}
 
-	ptrs = rtems_get_objectinfo_table(cpu)
-	for i in range(1, len(OBJECTS_APIS)):
-#	print "Parsing API: %s" % OBJECTS_APIS[i]
-		if ptrs[i] == 0:
-			continue
+		return out
 
-		oi_ptr = gca.target_memory_read(cpu, ptrs[i] + 4, 4) # +4 to get TASKS
-		oi = rtems_get_objectinfo_content(cpu, unpack("I", oi_ptr)[0])
+	def get_objectcontrol(self, cpu, addr):
+		data = gca.target_memory_read(cpu, addr, 4*4)
+		oc = unpack("IIII", data)
 
-		for i in range(1, oi["maximum"]+1):
-			data = gca.target_memory_read(cpu, oi["local_table"] + i * 4 , 4)
-			thread_ctrl_ptr = unpack("I", data)[0]
-#			print "TC ptr = %x" % thread_ctrl_ptr
+		out = {
+			"next": oc[0],
+			"prev": oc[1],
+			"id": oc[2],
+			"name": data[15:11:-1],
+		}
 
-			thread_control = rtems_get_threadcontrol(cpu, thread_ctrl_ptr)
-#			print thread_control
-			if thread_control["current_state"] & 1 == 0: # filter dormant threads
-				thread_list.append(thread_control)
+		return out
 
-	return thread_list	
+	def print_objects(self, cpu):
+		ptrs = self.get_objectinfo_table(cpu)
 
-def thread_regs_read(cpu, tid):
-	regs = gca.target_regs_read(cpu)
-	return regs
+		for i in range(1, len(ptrs)):
+			if ptrs[i] == 0:
+				continue
 
-def thread_regs_write(cpu, tid, regs):
-	ret = gca.target_regs_write(cpu, regs)
-	if ret > 0:
-		return True
-	return False
 
-def thread_mem_read(cpu, tid, addr, length):
-#	if (thread_getcurrent(cpu) != tid) 
-	return gca.target_memory_read(cpu, addr, length)
+			for j in range(1, len(self._OBJECTS[i])):
 
-def thread_mem_write(cpu, tid, addr, data):
-#	if (thread_getcurrent(cpu) != tid) 
-	ret = gca.target_memory_write(cpu, addr, data)
-	if ret > 0:
-		return True;
-	return False
+				oi_ptr = deref_ptr(cpu, ptrs[i] + 4 * j)
+				oi = self.get_objectinfo(cpu, oi_ptr)
 
-def threadlist_create(cpu):
-	global threads
-	global thread_list
+				for k in range(0, oi["maximum"] + 1):
+					objctrl_ptr = deref_ptr(cpu, oi["local_table"] + k * 4)
+					if objctrl_ptr == 0:
+						continue
 
-	threads = []
-	thread_list = []
+					oc = self.get_objectcontrol(cpu, objctrl_ptr)
+					gca.monitor_output("%s %s %08x %s" % (self._OBJECTS_APIS[i], self._OBJECTS[i][j], oc["id"], repr(oc["name"])))
 
-	thread_list = rtems_get_threads(cpu)
 
-	for i in range(0, len(thread_list)):
-		t = thread_list[i]
-		threads.append(t["oid"])
-				
-	return 1
+	def get_threadcontrol(self, cpu, addr):
+		if addr == 0:
+			return False
 
-def threadlist_count(cpu):
-	return len(threads)
+		data = gca.target_memory_read(cpu, addr, 5*4+4)
+		tc = unpack("IIIIII", data)
 
-def threadlist_getnext(cpu):
-	global threads
-	out = 0
-	if len(threads) > 0:
-		out = threads.pop()
-	return out
+		reg = gca.target_memory_read(cpu, addr + 0xd0, 6*4)
 
-def thread_isalive(cpu, t_id):
-	threadlist_create(cpu)
+		reg_fp_data = gca.target_memory_read(cpu, addr + 0xe8, 4)
+		reg_fp_ptr = unpack_int(reg_fp_data)
 
-	for i in range(0, len(thread_list)):
-		t = thread_list[i]
-		if t["oid"] == t_id:
-			return True
+		out = {
+			"id": tc[2],
+			"name": data[15:11:-1],
+			"current_state": tc[4],
+			"registers": {
+				"eflags": reg[0:4],
+				"esp": reg[4:8],
+				"ebp": reg[8:12],
+				"ebx": reg[12:16],
+				"esi": reg[16:20],
+				"edi": reg[20:24]
+			},
+			"registers_fp": reg_fp_ptr
+		}
 
-	return False
+		return out
 
-def thread_getcurrent(cpu):
-	return rtems_get_current(cpu)
+	def get_current_thread(self, cpu):
+		if not self._symbol_storage.exists("_Thread_Executing"):
+			return 1
 
-def thread_getinfo(cpu, t_id):
-	s = "%x" % (t_id)
-	for i in range(0, len(thread_list)):
-		t = thread_list[i]
-		if t["oid"] == t_id:
-			s = "%s %04x" % (t["name"], t["current_state"] & 0xffff)
-			break;
+		thread_ctrl_ptr = deref_ptr(cpu, self._symbol_storage.get("_Thread_Executing"))
+		thread_control = self.get_threadcontrol(cpu, thread_ctrl_ptr)
 
-	return s
+		return thread_control["id"]
 
-def symbol_getunknown():
-	global UnknownSymbols
-	out = ""
-	if len(UnknownSymbols) > 0:
-		out = UnknownSymbols.pop()
+	def get_threads(self, cpu):
+		thread_list = {}
 
-	return out
+		ptrs = self.get_objectinfo_table(cpu)
+		for i in range(1, len(ptrs)):
+			#print "Parsing API: %s" % self._OBJECTS_APIS[i]
+			if ptrs[i] == 0:
+				continue
 
-def symbol_add(symbol, value):
-	global Symbols
+			oi_ptr = deref_ptr(cpu, ptrs[i] + 4) # +4 to get TASKS (offset 1)
+			oi = self.get_objectinfo(cpu, oi_ptr)
 
-	print "Added symbol '%s' = 0x%x" % (symbol, value)
-	Symbols.append((symbol, value))
+			for i in range(0, oi["maximum"] + 1):
+				thread_ctrl_ptr = deref_ptr(cpu, oi["local_table"] + i * 4)
+				if thread_ctrl_ptr == 0:
+					continue
 
-def symbol_get(symbol):
-	for s, addr in Symbols:
-		if s == symbol:
-			return addr
+				thread_control = self.get_threadcontrol(cpu, thread_ctrl_ptr)
+				#print "%04x " % thread_control["id"]
 
-	return False
+				if thread_control["current_state"] & 1 == 0: # filter dormant threads
+					tid = thread_control["id"]
+					thread_list[tid] = thread_control
 
-def symbol_exists(symbol):
-	for s, addr in Symbols:
-		if s == symbol:
-			return True
+		# cache the result
+		self.thread_list = thread_list
 
-	return False
+		return thread_list
+
+	def get_thread_registers(self, cpu, tid):
+		thread = self.thread_list[tid]
+		t_regs = thread["registers"]
+
+		#FIXME: this is probably wrong eip
+		t_regs["eip"] = gca.target_memory_read(cpu, unpack_int(t_regs["esp"]), 4)
+
+		# fp working regs
+		# TODO: add missing fp regs, are they even preserved??!
+		if thread["registers_fp"] != 0:
+			for i in range(0, 8):
+				t_regs["fp%d" % i] = gca.target_memory_read(cpu, thread["registers_fp"] + i * 10, 10)
+
+		return self._target_cpu.get_gdb_regs(t_regs)
+
+	def set_thread_registers(self, cpu, tid, regs):
+		r = self._target_cpu.parse_gdb_regs(regs)
+		gca.monitor_output("Not implemented, yet")
+		return 0
 
